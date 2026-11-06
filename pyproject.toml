@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quantum-dot-pod-nn"
+version = "0.6.0"
+description = "Self-contained 40-state, 80-mode four-quantum-dot POD-Galerkin global/local expert benchmark"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26,<3",
+  "scipy>=1.12,<2",
+  "scikit-learn>=1.4,<2",
+  "torch>=2.2,<3",
+  "matplotlib>=3.8,<4",
+  "pandas>=2.1,<3",
+  "PyYAML>=6,<7",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

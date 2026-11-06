@@ -1,0 +1,89 @@
+# Full 49x49 / 40-state / 80-mode shape integration test; 16 geometries, 1+1 epochs.
+name: integration_40state
+seed: 42
+physics:
+  grid: 49
+  length_nm: 16.0
+  electron_mass_ratio: 0.023
+  states: 40
+  random_options_per_well: 2
+  center_perturb_nm: 0.75
+  radius_nm:
+  - 1.35
+  - 1.65
+  depth_ev:
+  - 2.0
+  - 2.4
+  geometry_seed: 7
+  eigsh_tol: 1.0e-07
+splits:
+  train: 0.7
+  validation: 0.15
+  test: 0.15
+pod:
+  modes: 80
+  oversampling: 20
+  power_iterations: 1
+  seed: 123
+features:
+  spectral_eigenvalues: 35
+  eigengaps: true
+  geometry_features: true
+  state_features: true
+clustering:
+  candidate_k:
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  use_lasso_signatures: true
+  lasso_alpha: 0.0001
+  kmeans_seed: 42
+  n_init: 30
+  soft_min_states: 1
+  max_states_target: 18
+  soft_min_penalty: 0.08
+  soft_max_penalty: 0.02
+  balance_penalty: 0.005
+network:
+  hidden_layers: 4
+  activation: tanh
+  global_width: 96
+  expert_widths:
+    small: 64
+    default: 96
+    large: 128
+    very_large: 160
+  batch_size: 64
+  fast_epochs: 1
+  finetune_epochs: 1
+  learning_rate: 0.0002
+  finetune_learning_rate: 5.0e-05
+  grad_clip: 0.5
+  pinn_warmup_epochs: 50
+  pinn_ramp_epochs: 50
+  clip_predicted_coefficients: true
+  clip_padding_factor: 0.25
+  active_coeff_energy_fraction: 0.99
+  active_coeff_multiplier: 4.0
+  active_coeff_floor: 0.0001
+  lambda_coeff: 1.0
+  lambda_active_coeff: 0.35
+  lambda_energy: 0.1
+  lambda_pinn: 1.0e-06
+  lambda_reg: 1.0e-06
+  lambda_finetune_wave: 1.0
+  lambda_finetune_density: 0.01
+  lambda_finetune_active_coeff: 0.15
+  lambda_finetune_energy: 0.1
+  lambda_finetune_pinn: 1.0e-06
+runtime:
+  cpu_threads: 2
+  infer_thread_candidates:
+  - 1
+  - 2
+  use_packed_experts: true
+  benchmark_repetitions: 3
