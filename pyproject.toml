@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quantum-dot-pod-nn"
-version = "0.6.0"
+version = "0.8.0"
 description = "Self-contained 40-state, 80-mode four-quantum-dot POD-Galerkin global/local expert benchmark"
 requires-python = ">=3.11"
 dependencies = [

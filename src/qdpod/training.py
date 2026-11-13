@@ -40,7 +40,7 @@ def energy_loss(true,pred):
 
 
 def validation_wave_metrics(model, scalers, features, true_coeff, true_wave_sqnorm,
-                            true_energies, clip=True):
+                            true_energies, clip=True, return_lse=False):
     """Validation-only sign-invariant full-space L2 error, cheaply in POD space.
 
     For an orthonormal POD basis Phi, ||psi - Phi a||^2 =
@@ -58,7 +58,12 @@ def validation_wave_metrics(model, scalers, features, true_coeff, true_wave_sqno
         norm = true_wave_sqnorm.clamp_min(1e-12)
         err2 = (norm + pred.square().sum(dim=1) - 2*(pred*true_coeff).sum(dim=1).abs())/norm
         wave_l2 = torch.sqrt(err2.clamp_min(0)).mean().item()
+        # Average of per-case squared normalized residuals, expressed as %.
+        # Do not square the *mean* L2 error: that is a different statistic.
+        wave_lse_pct = (100. * err2.clamp_min(0).mean()).item()
         energy_rel = (true_energies-e).abs().div(true_energies.abs().clamp_min(1e-12)).mean().item()
+    if return_lse:
+        return float(wave_l2), float(energy_rel), float(wave_lse_pct)
     return float(wave_l2), float(energy_rel)
 
 
@@ -151,12 +156,12 @@ def train_bundle(features,coeff,energies,psi,hred,train_ids,selected_states,phi,
                 opt.step();total+=float(loss.detach());count+=1
             mean=total/max(count,1)
             if scheduler is not None:scheduler.step()
-            val_wave=float('nan');val_energy=float('nan')
+            val_wave=float('nan');val_energy=float('nan');val_wave_pct=float('nan')
             if validate and ((epoch+1)%validation_every==0 or epoch+1==epochs):
                 model.eval()
-                val_wave,val_energy=validation_wave_metrics(
+                val_wave,val_energy,val_wave_pct=validation_wave_metrics(
                     model,scalers,vx_t,vy_t,vwave_norm,ve_t,
-                    clip=bool(n.get('clip_predicted_coefficients',True)))
+                    clip=bool(n.get('clip_predicted_coefficients',True)), return_lse=True)
                 if val_wave < best_wave - delta:
                     best_wave = val_wave
                     checks_without_improvement = 0
@@ -168,6 +173,7 @@ def train_bundle(features,coeff,energies,psi,hred,train_ids,selected_states,phi,
                     best_overall_state = copy.deepcopy(model.state_dict())
             history.append(dict(model=tag,stage=stage,epoch=epoch+1,loss=mean,
                                 validation_wave_rel_l2=val_wave,
+                                validation_wave_lse_pct=val_wave_pct,
                                 validation_energy_rel_abs=val_energy,
                                 learning_rate=float(opt.param_groups[0]['lr'])))
             if verbose and (epoch==0 or epoch+1==epochs or (epoch+1)%max(1,epochs//4)==0):

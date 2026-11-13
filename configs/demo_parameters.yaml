@@ -1,0 +1,205 @@
+# Edit ONLY this file to customize the default run: python main.py
+# Optional settings are shown as comments; uncomment to activate.
+# Changing parameters creates a different experiment: use a fresh results directory.
+# If changing physics.states, also adjust pod.modes, features.spectral_eigenvalues,
+# and runtime.reconstruction_states when needed.
+
+# Result-folder label for this experiment.
+name: tanh_40state_80mode_49grid
+# Seed for model initialization, split sampling, and reproducibility.
+seed: 42
+
+# Full-order quantum-dot model and geometry sampling
+physics:
+  # Number of grid points along each spatial direction (total degrees of freedom = grid squared).
+  grid: 49
+  # Width and height of the simulated square domain in nanometers.
+  length_nm: 16.0
+  # Effective electron mass divided by the free-electron mass.
+  electron_mass_ratio: 0.023
+  # Number of lowest eigenstates retained from each DNS solve.
+  states: 40
+  # Independent samples per dot; with four dots the geometry count is this value to the fourth power.
+  random_options_per_well: 4
+  # Maximum random shift of each quantum-dot center in nanometers.
+  center_perturb_nm: 0.75
+  # Minimum and maximum Gaussian-dot radii in nanometers.
+  radius_nm:
+  - 1.35
+  - 1.65
+  # Minimum and maximum Gaussian-dot depths in electronvolts.
+  depth_ev:
+  - 2.0
+  - 2.4
+  # Random seed for the four-dot parameter samples.
+  geometry_seed: 7
+  # Numerical convergence tolerance for the full-order sparse eigensolver.
+  eigsh_tol: 1.0e-07
+
+# Partition geometries for training, validation and test
+splits:
+  # Fraction of complete geometries used for model fitting and POD construction.
+  train: 0.7
+  # Fraction of geometries used for validation and expert-count selection.
+  validation: 0.15
+  # Fraction of geometries reserved for the final held-out comparison.
+  test: 0.15
+
+# Reduced POD basis construction
+pod:
+  # Number of POD basis modes retained for the neural outputs and reduced eigensolve.
+  modes: 80
+  # Extra vectors used internally by randomized POD/SVD.
+  oversampling: 20
+  # Randomized-SVD power iterations, trading construction time for accuracy.
+  power_iterations: 1
+  # Random seed for POD basis construction.
+  seed: 123
+
+# NN input features
+features:
+  # Number of reduced Hamiltonian eigenvalues included in neural inputs (must not exceed POD modes).
+  spectral_eigenvalues: 35
+  # Add energy gaps between consecutive reduced eigenvalues as features.
+  eigengaps: true
+  # Include the Gaussian-dot geometry and potential parameters as features.
+  geometry_features: true
+  # Include the eigenstate index/identity as neural input features.
+  state_features: true
+
+# Local expert clustering and model count
+clustering:
+  # Candidate numbers of local experts evaluated by validation KMeans when fixed_k is unset.
+  candidate_k:
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  # Soft-threshold POD coefficients before computing the state-clustering signatures.
+  use_lasso_signatures: true
+  # Soft-threshold strength for the clustering signatures.
+  lasso_alpha: 0.0001
+  # Random seed used in KMeans initialization.
+  kmeans_seed: 42
+  # Number of independent KMeans restarts per candidate expert count.
+  n_init: 30
+  # fixed_k: null  # Set an integer, e.g. 4, to use exactly that many local experts; null/absent uses candidate_k.
+  # Preferred minimum number of eigenstates assigned to each expert.
+  soft_min_states: 1
+  # Preferred maximum eigenstates per expert before a penalty applies.
+  max_states_target: 18
+  # Weight for clusters smaller than soft_min_states.
+  soft_min_penalty: 0.08
+  # Weight for clusters larger than max_states_target.
+  soft_max_penalty: 0.02
+  # Weight penalizing uneven numbers of eigenstates per expert.
+  balance_penalty: 0.005
+
+# Neural network, optimization and loss functions
+network:
+  # Number of fully connected hidden layers in each neural network.
+  hidden_layers: 4
+  # Activation function: tanh, relu, or silu.
+  activation: tanh
+  # Number of hidden neurons per layer in the global network.
+  global_width: 160
+  expert_widths:
+    # Hidden width for experts with few assigned eigenstates.
+    small: 96
+    # Hidden width for ordinary-sized expert groups.
+    default: 128
+    # Hidden width for larger expert groups.
+    large: 160
+    # Hidden width for the largest expert groups.
+    very_large: 192
+  # Training examples processed per optimizer minibatch.
+  batch_size: 128
+  # expert_width_state_thresholds:  # Override expert-group size cutoffs (original values shown).
+  #   small_max: 3
+  #   large_min: 7
+  #   very_large_min: 10
+  # Maximum epochs for coefficient/energy pretraining (stage 1).
+  fast_epochs: 850
+  # Maximum epochs for wavefunction/physics fine-tuning (stage 2).
+  finetune_epochs: 200
+  # Initial optimizer learning rate for stage 1.
+  learning_rate: 0.00035
+  # Initial optimizer learning rate for stage 2.
+  finetune_learning_rate: 7.0e-05
+  # Maximum gradient norm used to stabilize optimization.
+  grad_clip: 1.0
+  # Warmup duration before reaching the scheduled physics-informed loss.
+  pinn_warmup_epochs: 60
+  # Duration of the physics-informed loss ramp.
+  pinn_ramp_epochs: 60
+  # Bound predicted coefficients to padded training-data ranges during inference.
+  clip_predicted_coefficients: true
+  # Padding around observed training coefficients when clipping is enabled.
+  clip_padding_factor: 0.25
+  # Cumulative POD coefficient energy used to define active targets.
+  active_coeff_energy_fraction: 0.99
+  # Relative weight/multiplier for active coefficient supervision.
+  active_coeff_multiplier: 4.0
+  # Minimum active-coefficient threshold.
+  active_coeff_floor: 0.0001
+  # Stage 1 coefficient reconstruction loss weight.
+  lambda_coeff: 1.0
+  # Stage 1 emphasis on active POD coefficient terms.
+  lambda_active_coeff: 0.35
+  # Stage 1 relative energy prediction loss weight.
+  lambda_energy: 0.1
+  # Stage 1 reduced Schrödinger-equation residual loss weight.
+  lambda_pinn: 1.0e-06
+  # Stage 1 neural output regularization weight.
+  lambda_reg: 1.0e-06
+  # Stage 2 signed wavefunction reconstruction loss weight.
+  lambda_finetune_wave: 1.0
+  # Stage 2 probability-density reconstruction loss weight.
+  lambda_finetune_density: 0.01
+  # Stage 2 active coefficient supervision weight.
+  lambda_finetune_active_coeff: 0.15
+  # Stage 2 energy prediction loss weight.
+  lambda_finetune_energy: 0.1
+  # Stage 2 physics-informed residual weight.
+  lambda_finetune_pinn: 1.0e-06
+  # Optimizer weight decay used for regularization.
+  weight_decay: 1.0e-05
+  # Learning-rate schedule (cosine or constant).
+  lr_schedule: cosine
+  # Validate model performance every N epochs.
+  validation_every: 10
+  # Reload the lowest-validation-error network weights after training.
+  restore_best_validation: true
+  # Maximum number of validation checks without improvement before stopping.
+  validation_patience: 25
+  # Minimum validation improvement treated as significant.
+  validation_min_delta: 0.0002
+  # Orient coefficient signs consistently using training-only POD anchors.
+  gauge_align_coefficients: true
+  # Extra coefficient supervision weight for gauge-aligned targets.
+  lambda_gauge_supervision: 0.2
+
+# CPU runtime, benchmarks and reconstruction figures
+runtime:
+  # PyTorch CPU threads used for training and preprocessing.
+  cpu_threads: 2
+  # CPU thread counts compared for neural inference.
+  infer_thread_candidates:
+  - 1
+  - 2
+  # Enable optimized batching of local experts at prediction time.
+  use_packed_experts: true
+  # Repeated latency measurements per test geometry, summarized using medians.
+  benchmark_repetitions: 14
+  # How many held-out geometries receive detailed wavefunction figures.
+  reconstruction_geometries: 2
+  # One-based eigenstate indices included in the detailed wavefunction figures.
+  reconstruction_states:
+  - 1
+  - 10
+  - 20
+  - 40
+  # reconstruction_3d: true  # Enable or disable the signed 3D wavefunction surface panels.

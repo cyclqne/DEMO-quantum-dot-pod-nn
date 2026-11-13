@@ -1,4 +1,4 @@
-"""Honest diagnostic plots; no claimed speedup when measurements do not support it."""
+"""Accuracy, wavefunction and honest CPU timing visualizations."""
 from pathlib import Path
 import matplotlib
 matplotlib.use('Agg')
@@ -6,186 +6,402 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+# Subdued, legible colors: retained blue/teal identity for the neural models,
+# warm olive for POD, and a muted clay brown for DNS.
+PALETTE = {'DNS (solve only)':'#ae8169', 'POD-Galerkin':'#898f68',
+           'Global POD-NN':'#577a98', 'Local POD-NN':'#348887'}
+NN_METHODS = ['Global POD-NN', 'Local POD-NN']
+POD_FIELDS = {'full_online': ('total_online_ms','POD full online (assembly + eigensolve + reconstruction)'),
+              'eigensolve_only': ('pod_eigensolve_only_ms','POD reduced eigensolve only')}
+
+
+def _save(fig,path):
+    fig.savefig(path,dpi=195,bbox_inches='tight',facecolor='white')
+    plt.close(fig)
+
 
 def make_plots(out):
-    out=Path(out);figs=out/'figures';figs.mkdir(exist_ok=True)
+    out=Path(out)
+    figs=out/'figures';figs.mkdir(exist_ok=True)
+    # Remove legacy outputs when regenerating an existing run. These files are
+    # intentionally no longer produced, but older versions may have left them.
+    obsolete = (
+        'wavefunction_accuracy.png',
+        'total_cpu_latency.png',
+        'per_state_wave_error.png',
+        'online_time_by_geometry_all_methods.png',
+        'online_time_by_geometry_reduced_methods.png',
+        'online_time_distribution_reduced.png',
+        'local_global_latency_ratio_by_geometry.png',
+        'nn_forward_time_by_geometry.png',
+        'online_time_by_geometry_neural_networks.png',
+        'online_time_by_geometry_nueral_networks.png',
+        'online_time_distribution_reduced_pod_eigensolve_only.png',
+        'online_time_distribution_reduced_pod_full_online.png',
+        'pod_timing_components_by_geometry.png',
+        'pod_timing_components_stacked_by_geometry.png',
+        'pod_to_nn_time_ratio_by_geometry_pod_eigensolve_only.png',
+        'pod_to_nn_time_ratio_by_geometry_pod_full_online.png',
+        'pod_vs_nn_timing_by_geometry_pod_eigensolve_only.png',
+        'pod_vs_nn_timing_by_geometry_pod_full_online.png',
+        'wave_lse_percent_by_geometry.png',
+        'online_time_by_geometry_all_methods_pod_eigensolve_only.png.bak',
+    )
+    for filename in obsolete:
+        (figs / filename).unlink(missing_ok=True)
     summary=pd.read_csv(out/'metrics'/'summary.csv')
     timings=pd.read_csv(out/'metrics'/'timings.csv')
     groups=pd.read_csv(out/'metrics'/'expert_state_groups.csv')
     cluster=pd.read_csv(out/'metrics'/'cluster_validation_scores.csv')
     errors=pd.read_csv(out/'metrics'/'per_state_errors.csv')
-    order=['Global POD-NN','Local POD-NN','POD-Galerkin']
-    for col,label,outfile in [('mean_wave_rel_l2','Mean sign-invariant wave L2 error','wavefunction_accuracy.png'),
-                              ('mean_density_rel_l2','Mean relative density L2 error','density_accuracy.png'),
-                              ('mean_energy_rel_abs','Mean relative energy error','energy_accuracy.png')]:
-        fig,ax=plt.subplots(figsize=(8,4.8))
-        selected=summary.set_index('model').loc[order]
-        ax.bar(order,selected[col],color=['#57789d','#398d8a','#9a9f9e'])
-        ax.set_ylabel(label);ax.set_title('Held-out accuracy (lower is better)')
-        ax.grid(axis='y',alpha=.2);fig.tight_layout();fig.savefig(figs/outfile,dpi=180);plt.close(fig)
-    names=['DNS (solve only)','POD-Galerkin','Global POD-NN','Local POD-NN']
-    m=timings.groupby('model')['total_online_ms'].median()
-    fig,ax=plt.subplots(figsize=(9,4.5))
-    ax.bar(names,m.reindex(names),color=['#999999','#a2a760','#57789d','#398d8a'])
-    ax.set_ylabel('Median time per geometry (ms)');ax.set_title('Online cost; DNS = solve only')
-    ax.tick_params(axis='x',labelrotation=10);ax.grid(axis='y',alpha=.2)
-    fig.tight_layout();fig.savefig(figs/'total_cpu_latency.png',dpi=180);plt.close(fig)
-    fig,ax=plt.subplots(figsize=(9,4.5))
-    only=timings[timings.model.isin(order[:2])]
-    comps=only.groupby('model')[['feature_ms','forward_ms','reconstruction_ms']].median().reindex(order[:2])
+    # All accuracy visualizations compare the two trained NNs, not POD.
+    selected=summary.set_index('model').loc[NN_METHODS]
+    for col,label,outfile in [('mean_density_lse_pct','Density LSE (%)','density_accuracy.png'),
+                              ('mean_energy_rel_pct','Mean relative energy error (%)','energy_accuracy.png')]:
+        fig,ax=plt.subplots(figsize=(7.8,4.6))
+        ax.bar(NN_METHODS,selected[col].to_numpy(),
+               color=[PALETTE[n] for n in NN_METHODS],width=.56)
+        ax.set(ylabel=label,title='Held-out NN accuracy (lower is better)')
+        ax.grid(axis='y',alpha=.2,color='#888888')
+        ax.set_axisbelow(True);fig.tight_layout();_save(fig,figs/outfile)
+
+    fig,ax=plt.subplots(figsize=(8.8,4.7))
+    components=timings[timings.model.isin(NN_METHODS)].groupby('model')[
+        ['feature_ms','forward_ms','reconstruction_ms']].median().reindex(NN_METHODS)
     bottom=np.zeros(2)
-    for name,color in [('feature_ms','#a1b4c9'),('forward_ms','#57789d'),('reconstruction_ms','#55a57d')]:
-        ax.bar(order[:2],comps[name],bottom=bottom,label=name.replace('_ms','').replace('_',' ').title(),color=color)
-        bottom+=comps[name].values
-    ax.set_ylabel('Median component times (ms)');ax.set_title('NN online latency breakdown');ax.legend()
-    fig.tight_layout();fig.savefig(figs/'online_latency_breakdown.png',dpi=180);plt.close(fig)
-    fig,ax=plt.subplots(figsize=(7.5,4.5))
-    ax.plot(cluster.k,cluster.total_score,'o-')
-    ax.scatter(cluster.loc[cluster.selected,'k'],cluster.loc[cluster.selected,'total_score'],
-               s=100,marker='*',label='Selected',color='tab:red')
-    ax.set(xlabel='KMeans candidate K',ylabel='Original validation score',title='Research-rule state clustering')
-    ax.legend();ax.grid(alpha=.2);fig.tight_layout();fig.savefig(figs/'kmeans_selection.png',dpi=180);plt.close(fig)
+    for col,display,color in [('feature_ms','Operator and features','#bdc5bf'),
+                              ('forward_ms','Neural inference','#577a98'),
+                              ('reconstruction_ms','Wavefunction reconstruction','#a5ad78')]:
+        ax.bar(NN_METHODS,components[col].to_numpy(),bottom=bottom,
+               label=display,color=color,width=.56)
+        bottom+=components[col].to_numpy()
+    ax.set(ylabel='Median component time (ms)',title='Neural network online latency breakdown')
+    ax.legend(loc='upper right',fontsize=9);ax.grid(axis='y',alpha=.16)
+    fig.tight_layout();_save(fig,figs/'online_latency_breakdown.png')
+
+    fig,ax=plt.subplots(figsize=(7.7,4.5))
+    ax.plot(cluster.k,cluster.total_score,'o-',color=PALETTE['Global POD-NN'],lw=1.6)
+    chosen=cluster.loc[cluster.selected]
+    ax.scatter(chosen.k,chosen.total_score,s=110,marker='*',label='Selected',color='#b2755e',zorder=3)
+    ax.set(xlabel='Number of KMeans experts',ylabel='Validation score',title='State clustering selection')
+    ax.legend();ax.grid(alpha=.18);fig.tight_layout();_save(fig,figs/'kmeans_selection.png')
+
     fig,ax=plt.subplots(figsize=(9,4.5))
-    ax.scatter(groups.state,groups.expert,c=groups.expert,cmap='viridis',s=46)
-    ax.set(xlabel='Eigenstate index',ylabel='Local expert ID',title='Expert assignments (train/validation only)')
-    fig.tight_layout();fig.savefig(figs/'expert_state_groups.png',dpi=180);plt.close(fig)
-    fig,ax=plt.subplots(figsize=(9,4.5))
-    means=errors.groupby(['model','state'])['wave_rel_l2'].mean().unstack(0)
-    for method in order:ax.plot(means.index,means[method],label=method)
-    ax.set(xlabel='Eigenstate index',ylabel='Mean sign-invariant wave L2',title='Held-out per-state errors')
-    ax.legend();ax.grid(alpha=.2);fig.tight_layout();fig.savefig(figs/'per_state_wave_error.png',dpi=180);plt.close(fig)
-    make_timing_detail_figures(out, timings)
+    ax.scatter(groups.state,groups.expert,c=groups.expert,cmap='cividis',s=48)
+    ax.set(xlabel='Eigenstate index',ylabel='Local expert ID',title='Expert assignments')
+    ax.grid(axis='x',alpha=.12);fig.tight_layout();_save(fig,figs/'expert_state_groups.png')
+
+    err_nn=errors[errors.model.isin(NN_METHODS)]
+    means=err_nn.groupby(['model','state'])['wave_lse_pct'].mean().unstack('model')
+    fig,ax=plt.subplots(figsize=(10,4.8))
+    for model in NN_METHODS:
+        ax.plot(means.index,means[model],label=model,color=PALETTE[model],lw=1.8)
+    ax.set(xlabel='Eigenstate index',ylabel='Mean wavefunction LSE (%)',
+           title='Held-out wavefunction error by eigenstate (sign aligned)')
+    ax.grid(alpha=.18);ax.legend();fig.tight_layout()
+    _save(fig,figs/'per_state_wave_lse_percent.png')
+
+    timing_nn=timings[timings.model.isin(NN_METHODS)]
+    merged=err_nn.groupby(['model','geometry'],as_index=False)['wave_lse_pct'].mean().merge(
+        timing_nn[['model','geometry','total_online_ms']],on=['model','geometry'],validate='one_to_one')
+    fig,ax=plt.subplots(figsize=(8.2,5.1))
+    for model in NN_METHODS:
+        subset=merged[merged.model==model]
+        ax.scatter(subset.total_online_ms,subset.wave_lse_pct,s=35,alpha=.75,
+                   color=PALETTE[model],label=model,edgecolor='white',linewidth=.35)
+    ax.set(xlabel='Total NN online time (ms/geometry)',ylabel='Mean wavefunction LSE (%)',
+           title='Held-out accuracy versus online latency')
+    ax.legend();ax.grid(alpha=.16);fig.tight_layout()
+    _save(fig,figs/'accuracy_vs_online_latency_by_geometry.png')
+    make_timing_detail_figures(out,timings)
 
 
-def _save(fig, path):
-    fig.tight_layout()
-    fig.savefig(path, dpi=200, bbox_inches='tight')
-    plt.close(fig)
+def _timing_matrix(timings, pod_variant):
+    """Return one per-geometry timing matrix with the requested POD definition."""
+    field,_=POD_FIELDS[pod_variant]
+    df=timings[['geometry','model','total_online_ms', 'pod_eigensolve_only_ms']].copy()
+    if pod_variant=='eigensolve_only':
+        mask=df.model.eq('POD-Galerkin')
+        if df.loc[mask,'pod_eigensolve_only_ms'].isna().any():
+            raise ValueError('POD eigensolve-only timings are missing; rerun timing benchmark')
+        df.loc[mask,'total_online_ms']=df.loc[mask,'pod_eigensolve_only_ms']
+    return df.pivot(index='geometry',columns='model',values='total_online_ms').sort_index()
 
 
 def make_timing_detail_figures(out, timings):
-    """Plot per-geometry online cost for *every* method and relative overhead.
+    """Only the two requested per-geometry timing comparisons remain.
 
-    DNS is clearly marked solve-only, while POD and both NNs include their
-    required online computation. X labels are actual held-out geometry IDs.
+    Every POD-containing figure has a full-online and eigensolve-only version;
+    DNS remains sparse-solve-only, and both NNs retain their full online cost.
+    All detailed timing measurements still remain available in CSV output.
     """
     out = Path(out)
-    figures = out/'figures'
-    all_methods = ['DNS (solve only)', 'POD-Galerkin', 'Global POD-NN', 'Local POD-NN']
-    reduced = ['POD-Galerkin', 'Global POD-NN', 'Local POD-NN']
-    neural = ['Global POD-NN', 'Local POD-NN']
-    colors = {'DNS (solve only)':'#a66532', 'POD-Galerkin':'#6a8d53',
-              'Global POD-NN':'#406ca5', 'Local POD-NN':'#188d90'}
-    t = timings.pivot(index='geometry', columns='model', values='total_online_ms').sort_index()
-    x = t.index.to_numpy()
+    figures = out / 'figures'
+    figures.mkdir(exist_ok=True)
+    comparisons = [
+        (['DNS (solve only)', 'POD-Galerkin'] + NN_METHODS,
+         'online_time_by_geometry_all_methods',
+         'Per-geometry CPU time: DNS, POD and neural networks', True),
+        (['POD-Galerkin'] + NN_METHODS,
+         'online_time_by_geometry_reduced_methods',
+         'Reduced-order online runtime by geometry', False),
+    ]
+    for variant, (_, pod_label) in POD_FIELDS.items():
+        series = _timing_matrix(timings, variant)
+        x = series.index.to_numpy()
+        for methods, stem, title, use_log in comparisons:
+            fig, ax = plt.subplots(figsize=(11, 5.2))
+            for method in methods:
+                label = pod_label if method == 'POD-Galerkin' else method
+                ax.plot(x, series[method], marker='o', markersize=3,
+                        linewidth=1.5, label=label, color=PALETTE[method])
+            if use_log:
+                ax.set_yscale('log')
+            ax.set(xlabel='Held-out geometry ID', ylabel='Time (ms per geometry)',
+                   title=f'{title}\n{pod_label}')
+            ax.grid(alpha=.18, which='both')
+            ax.legend(fontsize=9)
+            fig.tight_layout()
+            _save(fig, figures / f'{stem}_pod_{variant}.png')
 
-    for group, filename, title, log_axis in [
-        (all_methods,'online_time_by_geometry_all_methods.png',
-         'Online time for each held-out geometry (DNS: solve only)',True),
-        (reduced,'online_time_by_geometry_reduced_methods.png',
-         'Full online time: POD-Galerkin vs global/local NNs',False),
-        (neural,'online_time_by_geometry_neural_networks.png',
-         'Global vs local NN total online time per geometry',False),
-    ]:
-        fig, ax = plt.subplots(figsize=(11,5.2))
-        for name in group:
-            ax.plot(x, t[name].to_numpy(), marker='o', markersize=3.2, linewidth=1.4,
-                    label=name, color=colors[name])
-        if log_axis:ax.set_yscale('log')
-        ax.set(xlabel='Held-out geometry ID',ylabel='Milliseconds per geometry',title=title)
-        ax.grid(alpha=.23, which='both');ax.legend(fontsize=9)
-        _save(fig,figures/filename)
 
-    fig, ax = plt.subplots(figsize=(10.5,4.5))
-    ratio = t['Local POD-NN'].to_numpy()/np.maximum(t['Global POD-NN'].to_numpy(),1e-9)
-    ax.plot(x,ratio,'o-',linewidth=1.5,markersize=3.5,color=colors['Local POD-NN'])
-    ax.axhline(1.,linestyle='--',color='#444444',label='Same online time')
-    ax.axhline(1.2,linestyle=':',color='#aa6222',label='20% slower than global')
-    ax.set(xlabel='Held-out geometry ID',ylabel='Local/global full online-time ratio',
-           title='Local inference overhead on each test geometry')
-    ax.grid(alpha=.2);ax.legend()
-    _save(fig,figures/'local_global_latency_ratio_by_geometry.png')
+def _wavefunction_modal_sum_figure(figdir, geometry_id, state, grid, length,
+                                   ref, pod, global_wave, local_wave, num_modes):
+    """Actual signed wavefunction (not probability density) in the x-y domain.
 
-    f = timings[timings.model.isin(neural)].pivot(index='geometry',columns='model',values='forward_ms').sort_index()
-    fig,ax=plt.subplots(figsize=(10.5,4.5))
-    for name in neural:
-        ax.plot(f.index,f[name],marker='o',markersize=3.2,label=name,linewidth=1.4,color=colors[name])
-    ax.set(xlabel='Held-out geometry ID', ylabel='Forward inference (ms)',
-           title='Network forward time (separate from online feature construction)')
-    ax.grid(alpha=.2);ax.legend()
-    _save(fig,figures/'nn_forward_time_by_geometry.png')
+    Each approximation is the full sum a_j * eta_j. All panels share one
+    zero-centered color scale; signs were matched to DNS solely for display.
+    """
+    names = ['DNS reference', 'POD-Galerkin', 'Global POD-NN', 'Local POD-NN']
+    waves = [ref, pod, global_wave, local_wave]
+    vmax = max(float(np.max(np.abs(w))) for w in waves)
+    vmax = max(vmax, 1e-12)
+    nx = grid
+    # A physically meaningful horizontal section: the row containing the
+    # largest absolute DNS amplitude. This choice affects plotting only.
+    ix_max = int(np.argmax(np.abs(ref)))
+    yrow = ix_max % nx  # Fortran-order flattened (y,x) grid
+    # Flattening is Fortran-order, so y index varies fastest.
+    xs = np.arange(nx) * length / nx
+    y_nm = yrow * length / nx
+    fig = plt.figure(figsize=(16, 10.8))
+    gs = fig.add_gridspec(3,4, height_ratios=[1.0, .79, .75], hspace=.39, wspace=.20,
+                          left=.06, right=.91, bottom=.07, top=.87)
+    first_images = []
+    for j,(name,wave) in enumerate(zip(names,waves)):
+        field = wave.reshape((nx,nx),order='F')
+        ax=fig.add_subplot(gs[0,j])
+        im=ax.imshow(field,origin='lower',extent=[0,length,0,length],
+                     cmap='RdBu_r',vmin=-vmax,vmax=vmax,interpolation='nearest')
+        ax.axhline(y_nm,color='k',linewidth=.75,linestyle=':',alpha=.75)
+        ax.set_title(name,fontsize=11.5)
+        ax.set_xlabel('x (nm)')
+        if j==0:ax.set_ylabel('y (nm)')
+        first_images.append(im)
+        if j>0:
+            ax=fig.add_subplot(gs[1,j])
+            diff=field-ref.reshape((nx,nx),order='F')
+            ax.imshow(diff,origin='lower',extent=[0,length,0,length],
+                      cmap='PuOr',vmin=-2*vmax,vmax=2*vmax,interpolation='nearest')
+            ax.set_title('Signed residual vs DNS',fontsize=10)
+            ax.set_xlabel('x (nm)')
+        else:
+            ax=fig.add_subplot(gs[1,0]);ax.axis('off')
+            ax.text(0.03,.92,'Wavefunction construction',fontsize=11,weight='bold',va='top')
+            ax.text(0.03,.74,r'$\psi_\mathrm{POD}=\sum_{j=1}^{M}a_j^\mathrm{POD}\eta_j$',fontsize=13,va='top')
+            ax.text(0.03,.40,r'$\widehat{\psi}_\mathrm{NN}=\sum_{j=1}^{M}\hat a_j^\mathrm{NN}\eta_j$',fontsize=13,va='top')
+            ax.text(0.03,.07,f'M = {num_modes} modes',fontsize=11,va='bottom')
+    # One centerline for all methods; 1D real wavefunction, not |psi|^2.
+    line_ax=fig.add_subplot(gs[2,:]);colors=['#333333','#898f68','#577a98','#348887']
+    for wave,name,col in zip(waves,names,colors):
+        field=wave.reshape((nx,nx),order='F')
+        line_ax.plot(xs,field[yrow,:],label=name,color=col,linewidth=2 if name=='Local POD-NN' else 1.5)
+    line_ax.axhline(0,color='gray',lw=.75)
+    line_ax.set(xlabel='x (nm)',ylabel='Signed wavefunction amplitude',
+                title=f'Horizontal wavefunction profile at y = {y_nm:.2f} nm (dotted lines above)')
+    line_ax.grid(alpha=.2);line_ax.legend(ncol=4,fontsize=9,loc='upper right')
+    # Colorbar for row-one heatmaps, separate from the residual colors.
+    cb_ax=fig.add_axes([.924,.59,.012,.27])
+    fig.colorbar(first_images[0],cax=cb_ax,label='Signed ψ amplitude')
+    fig.suptitle(f'Geometry {geometry_id} | eigenstate {state+1}: signed wavefunction from POD modal sums\n'
+                 'DNS reference vs reduced eigensolve and learned POD coefficients',fontsize=14)
+    path=figdir/f'wavefunction_sum_a_eta_geometry_{geometry_id:04d}_state_{state+1:02d}.png'
+    fig.savefig(path,dpi=180)
+    plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=(9,4.6))
-    values = [t[name].to_numpy() for name in reduced]
-    ax.boxplot(values,showfliers=True)
-    ax.set_xticks(np.arange(1,len(reduced)+1),reduced)
-    ax.set(ylabel='Full online time (ms)',title='Held-out geometry latency distributions')
-    ax.grid(axis='y',alpha=.2)
-    _save(fig,figures/'online_time_distribution_reduced.png')
+
+
+def _modal_terms_figure(figdir, geometry_id, state, phi, grid, length,
+                        pod_a, local_a, pod_sign, local_sign):
+    """Show actual terms a_j * eta_j and their full signed sum for POD/local NN.
+
+    Select the four most influential modes under the COMBINED POD/local
+    coefficient magnitudes, then aggregate the remaining M-4 contributions.
+    Each column uses one shared symmetric color scale across both methods.
+    Display signs are consistently applied to all modal terms and totals.
+    """
+    from .wavefunction import modal_sum
+
+    modes=phi.shape[1]
+    top=min(4,modes)
+    highest=np.argsort(np.abs(pod_a)+np.abs(local_a))[-top:][::-1]
+    methods=[('POD-Galerkin',pod_a*pod_sign),('Local POD-NN',local_a*local_sign)]
+    maps=[]
+    titles=[rf'$a_{{{j+1}}}\eta_{{{j+1}}}(x,y)$' for j in highest]
+    titles += [f'Remaining {modes-top} modes',f'Full sum ({modes} modes)']
+    for _,a in methods:
+        selected=[a[int(j)]*phi[:,int(j)] for j in highest]
+        total=modal_sum(phi,a)
+        other=total-np.sum(selected,axis=0)
+        maps.append(selected+[other,total])
+    ncol=top+2
+    fig,axes=plt.subplots(2,ncol,figsize=(3.0*ncol,6.1),sharex=True,sharey=True)
+    for j in range(ncol):
+        lim=max(float(np.max(np.abs(maps[0][j]))),float(np.max(np.abs(maps[1][j]))),1e-12)
+        for i,(name,_) in enumerate(methods):
+            ax=axes[i,j]
+            image=maps[i][j].reshape((grid,grid),order='F')
+            ax.imshow(image,origin='lower',extent=[0,length,0,length],
+                      cmap='RdBu_r',vmin=-lim,vmax=lim,interpolation='nearest')
+            if i==0:ax.set_title(titles[j],fontsize=10)
+            if j==0:ax.set_ylabel(name+'\ny (nm)',fontsize=10)
+            if i==1:ax.set_xlabel('x (nm)')
+    fig.suptitle(f'Geometry {geometry_id} | eigenstate {state+1} | signed wavefunction modal decomposition\n'
+                 r'Left: individual $a_j\eta_j$. Right: $\sum_{j=1}^{M}a_j\eta_j$. '
+                 '(Each column shares its color scale across methods.)',fontsize=12)
+    fig.subplots_adjust(left=.075,right=.99,top=.82,bottom=.09,wspace=.12,hspace=.18)
+    fig.savefig(figdir/f'wavefunction_modal_contributions_geometry_{geometry_id:04d}_state_{state+1:02d}.png',dpi=170)
+    plt.close(fig)
+
+
+def _wavefunction_surface_figure(figdir,geometry_id,state,grid,length,ref,pod,global_wave,local_wave):
+    """Three-dimensional surfaces of the *signed* real wavefunction amplitude."""
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+    names=['DNS reference','POD: Σ a η','Global NN: Σ â η','Local NN: Σ â η']
+    waves=[ref,pod,global_wave,local_wave]
+    vlim=max(max(float(np.max(np.abs(w))) for w in waves),1e-12)
+    x=np.arange(grid)*length/grid
+    X,Y=np.meshgrid(x,x,indexing='xy')
+    fig=plt.figure(figsize=(16,4.9))
+    cmap=plt.get_cmap('RdBu_r')
+    for k,(name,wave) in enumerate(zip(names,waves)):
+        ax=fig.add_subplot(1,4,k+1,projection='3d')
+        Z=wave.reshape(grid,grid,order='F')
+        ax.plot_surface(X,Y,Z,rstride=1,cstride=1,cmap=cmap,
+                        vmin=-vlim,vmax=vlim,linewidth=0,antialiased=True)
+        ax.set(xlabel='x (nm)',ylabel='y (nm)',zlabel='ψ(x,y)',zlim=(-vlim,vlim))
+        ax.set_title(name,fontsize=11)
+        ax.view_init(elev=32,azim=-62)
+    fig.suptitle(f'Geometry {geometry_id} | eigenstate {state+1}: signed wavefunction ψ(x,y)',fontsize=14)
+    fig.subplots_adjust(left=.02,right=.98,top=.87,bottom=.05,wspace=.12)
+    fig.savefig(figdir/f'wavefunction_3d_geometry_{geometry_id:04d}_state_{state+1:02d}.png',dpi=160)
+    plt.close(fig)
 
 
 def make_reconstruction_figures(out, data, phi, red, models, labels, split, cfg, local_predictor):
-    """Reconstruct wavefunctions/densities on fixed held-out geometries.
+    """DNS and reconstructed ψ(x,y) = sum_j a_j * η_j(x,y) on held-out cases.
 
-    Color range is SHARED across the four methods for each field; predicted
-    wavefunction signs are aligned to DNS *for display only*. No hidden test
-    selection or oracle features are used by the neural predictors.
+    The POD coefficients are eigenvectors of the reduced Hamiltonian, while
+    both neural coefficient arrays come from trained model outputs. All three
+    methods share the *same* train-only POD spatial basis. DNS is used only as
+    a plotted reference and to choose a display sign; it never enters a model.
     """
     from .evaluation import predict_global
-    from .pod import pod_galerkin
+    from .features import build_features
+    from .wavefunction import modal_sum, pod_galerkin_amplitudes, align_display_sign
 
     out = Path(out); figdir=out/'figures'; figdir.mkdir(parents=True,exist_ok=True)
-    ngrid=int(cfg['physics']['grid']); length=float(cfg['physics']['length_nm'])
-    test=split['test']; selected_geometry_count=min(len(test),int(cfg['runtime'].get('reconstruction_geometries',2)))
-    selected_geometries=list(test[:selected_geometry_count])
-    selected_states=cfg['runtime'].get('reconstruction_states',[1,cfg['physics']['states']])
-    selected_states=sorted(set(int(s)-1 for s in selected_states))
-    for geom_id in selected_geometries:
-        one_features = None
-        # The same precomputed reduced-operator features that enter accuracy
-        # evaluation are used; no hidden DNS states enter either predictor.
-        from .features import build_features
+    diagdir=out/'data'/'wavefunction_reconstructions';diagdir.mkdir(parents=True,exist_ok=True)
+    grid=int(cfg['physics']['grid']);length=float(cfg['physics']['length_nm'])
+    num_modes=int(phi.shape[1]);nstates=int(cfg['physics']['states'])
+    test=split['test'];nselected=min(len(test),int(cfg['runtime'].get('reconstruction_geometries',2)))
+    selected_geometry_ids=list(test[:nselected])
+    selected_states=sorted(set(int(x)-1 for x in cfg['runtime'].get('reconstruction_states',[1,nstates])))
+    for geom_id in selected_geometry_ids:
         one_features=build_features({'params':data['params'][geom_id:geom_id+1]},
                                     red[geom_id:geom_id+1],cfg)
         global_coeff,_=predict_global(models['global'],one_features,cfg)
         local_coeff,_=local_predictor.predict(one_features)
-        _,gal=pod_galerkin({'energies':data['energies'][geom_id:geom_id+1]},phi,
-                            red[geom_id:geom_id+1])
-        global_wave=np.einsum('sm,pm->sp',global_coeff[0],phi,optimize=True)
-        local_wave=np.einsum('sm,pm->sp',local_coeff[0],phi,optimize=True)
+        pod_coeff=pod_galerkin_amplitudes(red[geom_id], nstates)
+        # The ENTIRE signed wavefunction comes from sum(a[j]*eta[j](x,y)):
+        psi_pod=modal_sum(phi,pod_coeff)
+        psi_global=modal_sum(phi,global_coeff[0])
+        psi_local=modal_sum(phi,local_coeff[0])
         gt=data['psi'][geom_id]
-        names=['DNS','POD-Galerkin','Global POD-NN','Local POD-NN']
-        all_waves=[gt,gal[0],global_wave,local_wave]
+        names=['DNS', 'POD-Galerkin', 'Global POD-NN', 'Local POD-NN']
         for state in selected_states:
-            if not (0<=state<gt.shape[0]):continue
-            reference=gt[state].astype('float64')
-            fields=[reference]
-            for waves in all_waves[1:]:
-                v=waves[state].astype('float64')
-                if np.dot(reference,v)<0:v=-v
-                fields.append(v)
-            vmax=max(float(np.max(abs(w))) for w in fields)
+            if not (0 <= state < gt.shape[0]): continue
+            reference=np.asarray(gt[state],dtype='float64')
+            p_raw=np.asarray(psi_pod[state],dtype='float64')
+            g_raw=np.asarray(psi_global[state],dtype='float64')
+            l_raw=np.asarray(psi_local[state],dtype='float64')
+            p,psign=align_display_sign(reference,p_raw)
+            g,gsign=align_display_sign(reference,g_raw)
+            l,lsign=align_display_sign(reference,l_raw)
+            fields=[reference,p,g,l]
+            vmax=max(float(np.max(np.abs(w))) for w in fields)
             density_max=max(float(np.max(w*w)) for w in fields)
-            fig,axes=plt.subplots(2,4,figsize=(15,7.7),sharex=True,sharey=True)
-            for j,(name,wave) in enumerate(zip(names,fields)):
-                arr=wave.reshape((ngrid,ngrid),order='F')
+            vmax=max(vmax,1e-12);density_max=max(density_max,1e-12)
+            # Reserve a dedicated left-hand column for the two colorbars.
+            # Never attach colorbars to auto-resized axes: that can overlap
+            # the right-most reconstruction panels in narrow exports.
+            fig=plt.figure(figsize=(16.6,7.8))
+            grid_spec=fig.add_gridspec(2,5,width_ratios=[.06,1,1,1,1],
+                left=.085,right=.984,top=.83,bottom=.10,hspace=.28,wspace=.14)
+            bar_wave=fig.add_subplot(grid_spec[0,0])
+            bar_density=fig.add_subplot(grid_spec[1,0])
+            axes=np.empty((2,4),dtype=object)
+            for ii in range(2):
+                for jj in range(4):
+                    axes[ii,jj]=fig.add_subplot(grid_spec[ii,jj+1])
+            field_titles=['DNS reference',
+                          r'POD: $\sum_j a_j^{\mathrm{POD}}\eta_j$',
+                          r'Global NN: $\sum_j \hat a_j^{\mathrm{G}}\eta_j$',
+                          r'Local NN: $\sum_j \hat a_j^{\mathrm{L}}\eta_j$']
+            for j,(name,wave) in enumerate(zip(field_titles,fields)):
+                arr=wave.reshape((grid,grid),order='F')
                 im_wave=axes[0,j].imshow(arr,origin='lower',extent=[0,length,0,length],
                                           cmap='RdBu_r',vmin=-vmax,vmax=vmax,interpolation='nearest')
                 im_density=axes[1,j].imshow(arr*arr,origin='lower',extent=[0,length,0,length],
                                              cmap='viridis',vmin=0,vmax=density_max,interpolation='nearest')
-                error=min(np.linalg.norm(reference-wave),np.linalg.norm(reference+wave))/max(np.linalg.norm(reference),1e-12)
-                axes[0,j].set_title(name + (f'  | L2={error:.3f}' if j else '  | reference'),fontsize=11)
+                from .evaluation import percent_lse
+                error=float(percent_lse(reference,wave,sign_invariant=True))
+                axes[0,j].set_title(name + (f'\nLSE={error:.2f}%' if j else '\nreference'),fontsize=10)
                 axes[1,j].set_xlabel('x (nm)')
                 if j==0:
-                    axes[0,j].set_ylabel('y (nm)   |   wavefunction')
-                    axes[1,j].set_ylabel('y (nm)   |   density |ψ|²')
-            fig.suptitle(f'Geometry {int(geom_id)} · eigenstate {state+1} · same color ranges by row',fontsize=14)
-            fig.colorbar(im_wave,ax=list(axes[0,:]),fraction=.012,pad=.012,label='Signed wavefunction amplitude')
-            fig.colorbar(im_density,ax=list(axes[1,:]),fraction=.012,pad=.012,label='Density |ψ|²')
-            # avoid tight_layout warning for shared per-row colorbars
-            fig.subplots_adjust(left=.055,right=.91,top=.87,bottom=.08,hspace=.17,wspace=.10)
+                    axes[0,j].set_ylabel('y (nm) | signed wavefunction ψ')
+                    axes[1,j].set_ylabel('y (nm) | density |ψ|²')
+            fig.suptitle(f'Geometry {int(geom_id)} · eigenstate {state+1} · {num_modes} POD modes\n'
+                         'Signed ψ reconstructed as the full modal sum a × η; shared color scales by row',fontsize=13)
+            cb_wave=fig.colorbar(im_wave,cax=bar_wave)
+            cb_density=fig.colorbar(im_density,cax=bar_density)
+            for cb in (cb_wave,cb_density):
+                cb.ax.yaxis.set_ticks_position('left')
+                cb.ax.yaxis.set_label_position('left')
+                cb.ax.tick_params(labelsize=8,pad=2)
+            cb_wave.set_label('Signed ψ',fontsize=9,labelpad=4)
+            cb_density.set_label('Density |ψ|²',fontsize=9,labelpad=4)
             fig.savefig(figdir/f'reconstruction_geometry_{geom_id:04d}_state_{state+1:02d}.png',dpi=180)
             plt.close(fig)
+
+            # Store the unmodified raw coefficient and reconstructed fields so
+            # an external researcher can recompute each modal sum independently.
+            np.savez_compressed(diagdir/f'wavefunction_geometry_{geom_id:04d}_state_{state+1:02d}.npz',
+                geometry_id=int(geom_id),state_index=int(state+1),grid=grid,
+                n_modes=num_modes,psi_dns=reference.astype('float32'),
+                a_pod=pod_coeff[state].astype('float32'),
+                a_global=global_coeff[0,state].astype('float32'),
+                a_local=local_coeff[0,state].astype('float32'),
+                psi_pod=p_raw.astype('float32'),psi_global=g_raw.astype('float32'),
+                psi_local=l_raw.astype('float32'),
+                display_sign_pod=psign,display_sign_global=gsign,display_sign_local=lsign)
+
+            _wavefunction_modal_sum_figure(figdir,int(geom_id),state,grid,length,
+                                           reference,p,g,l,num_modes)
+            _modal_terms_figure(figdir,int(geom_id),state,phi,grid,length,
+                                pod_coeff[state],local_coeff[0,state],psign,lsign)
+            if cfg['runtime'].get('reconstruction_3d',True):
+                _wavefunction_surface_figure(figdir,int(geom_id),state,grid,length,reference,p,g,l)
 
 
 def make_training_figures(out):
@@ -197,19 +413,23 @@ def make_training_figures(out):
     figdir=out/'figures'
     for metric,filename,title,yscale in [
         ('loss','training_loss_by_model.png','Stage-wise optimization objective','log'),
-        ('validation_wave_rel_l2','validation_wave_error_by_model.png',
-         'Actual sign-invariant validation wave L2','linear'),
+        ('validation_wave_lse_pct','validation_wave_error_by_model.png',
+         'Validation wavefunction LSE (%) — sign aligned','linear'),
         ('validation_energy_rel_abs','validation_energy_error_by_model.png',
-         'Relative validation energy error','linear')]:
+         'Relative validation energy error (%)','linear')]:
         if metric not in df:continue
         fig,axes=plt.subplots(1,2,figsize=(13,4.5))
         for k,stage in enumerate(('coeff','full')):
             part=df[df.stage==stage]
             for name,group in part.groupby('model'):
                 v=group[metric].to_numpy(dtype=float)
+                if metric=='validation_energy_rel_abs': v=100.*v
                 valid=np.isfinite(v) & (v>0 if yscale=='log' else np.ones(len(v),dtype=bool))
                 if valid.any():axes[k].plot(group.epoch.to_numpy()[valid],v[valid],label=name,linewidth=1.4)
-            axes[k].set(xlabel='Epoch',ylabel=metric.replace('_',' '),title=stage+' stage')
+            ylabel = ('Wavefunction LSE (%)' if metric=='validation_wave_lse_pct' else
+                      'Relative energy error (%)' if metric=='validation_energy_rel_abs' else
+                      'Training objective')
+            axes[k].set(xlabel='Epoch',ylabel=ylabel,title=stage+' stage')
             axes[k].grid(alpha=.2)
             if yscale=='log':axes[k].set_yscale('log')
             if axes[k].lines:axes[k].legend(fontsize=8)

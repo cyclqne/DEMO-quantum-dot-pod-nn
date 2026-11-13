@@ -48,10 +48,22 @@ def test_timing_plots_are_per_geometry(tmp_path):
     rows=[]
     for g in (2,5,9):
         for j,m in enumerate(models):
-            rows.append(dict(geometry=g,model=m,total_online_ms=(g+1)*(j+1)/20,
-                             forward_ms=(g+1)*(j+1)/60))
+            row=dict(geometry=g,model=m,total_online_ms=(g+1)*(j+1)/20,
+                     forward_ms=(g+1)*(j+1)/60)
+            if m=='POD-Galerkin':
+                row.update(pod_eigensolve_only_ms=.035*(g+1),
+                           pod_assembly_ms=.02*(g+1),pod_reconstruction_ms=.01*(g+1),
+                           pod_full_online_ms=(g+1)*(j+1)/20)
+            rows.append(row)
     make_timing_detail_figures(tmp_path,pd.DataFrame(rows))
     figs=tmp_path/'figures'
-    assert (figs/'online_time_by_geometry_all_methods.png').stat().st_size>1000
-    assert (figs/'online_time_by_geometry_neural_networks.png').stat().st_size>1000
-    assert (figs/'nn_forward_time_by_geometry.png').stat().st_size>1000
+    assert (figs/'online_time_by_geometry_all_methods_pod_full_online.png').stat().st_size>1000
+    assert (figs/'online_time_by_geometry_all_methods_pod_eigensolve_only.png').stat().st_size>1000
+    assert (figs/'online_time_by_geometry_reduced_methods_pod_full_online.png').stat().st_size>1000
+    assert (figs/'online_time_by_geometry_reduced_methods_pod_eigensolve_only.png').stat().st_size>1000
+    forbidden = ["pod_vs_nn_timing_by_geometry_pod_full_online.png",
+                 "pod_vs_nn_timing_by_geometry_pod_eigensolve_only.png",
+                 "pod_timing_components_by_geometry.png",
+                 "online_time_by_geometry_neural_networks.png",
+                 "nn_forward_time_by_geometry.png"]
+    assert all(not (figs / filename).exists() for filename in forbidden)

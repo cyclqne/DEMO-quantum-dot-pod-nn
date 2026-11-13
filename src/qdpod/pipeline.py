@@ -25,6 +25,28 @@ def write_rows(path,rows):
     pd.DataFrame(rows).to_csv(path,index=False)
 
 
+def goal_diagnostics(accuracy, timings):
+    """Informative thresholds only; never used to choose a network model."""
+    sm={r['model']:r for r in accuracy}
+    time_med=pd.DataFrame(timings).groupby('model')['total_online_ms'].median().to_dict()
+    target_rows=[
+        dict(goal='Local mean squared wave LSE below 4%',
+             observed=float(sm['Local POD-NN']['mean_wave_lse_pct']),threshold=4.0,
+             passes=bool(sm['Local POD-NN']['mean_wave_lse_pct']<4.0)),
+        dict(goal='Local mean relative energy error below 2%',
+             observed=float(sm['Local POD-NN']['mean_energy_rel_pct']),threshold=2.0,
+             passes=bool(sm['Local POD-NN']['mean_energy_rel_pct']<2.0)),
+        dict(goal='Local/global total latency at most 1.20',
+             observed=float(time_med['Local POD-NN']/time_med['Global POD-NN']),threshold=1.20,
+             passes=bool(time_med['Local POD-NN']/time_med['Global POD-NN']<=1.20)),
+        dict(goal='Local wave error lower than global wave error',
+             observed=float(sm['Local POD-NN']['mean_wave_lse_pct']/max(sm['Global POD-NN']['mean_wave_lse_pct'],1e-12)),
+             threshold=1.0,
+             passes=bool(sm['Local POD-NN']['mean_wave_lse_pct']<sm['Global POD-NN']['mean_wave_lse_pct'])),
+    ]
+    return target_rows
+
+
 def run(config_path,output=None,resume=False,plots=True):
     cfg=load_config(config_path)
     np.random.seed(cfg['seed']);torch.manual_seed(cfg['seed'])
@@ -105,29 +127,16 @@ def run(config_path,output=None,resume=False,plots=True):
     write_rows(root/'metrics'/'summary.csv',accuracy)
     write_rows(root/'metrics'/'per_state_errors.csv',per_state)
     write_rows(root/'metrics'/'timings.csv',timings)
-    import statistics
-    sm={r['model']:r for r in accuracy}
+    write_rows(root/'metrics'/'pod_timing_breakdown.csv',[r for r in timings if r['model']=='POD-Galerkin'])
     time_med=pd.DataFrame(timings).groupby('model')['total_online_ms'].median().to_dict()
-    # Outcome criteria are *diagnostics*, never model-selection rules.
-    target_rows=[
-        dict(goal='Local mean wave relative L2 below 0.20',
-             observed=float(sm['Local POD-NN']['mean_wave_rel_l2']),threshold=0.20,
-             passes=bool(sm['Local POD-NN']['mean_wave_rel_l2']<0.20)),
-        dict(goal='Local mean relative energy error below 0.02',
-             observed=float(sm['Local POD-NN']['mean_energy_rel_abs']),threshold=0.02,
-             passes=bool(sm['Local POD-NN']['mean_energy_rel_abs']<0.02)),
-        dict(goal='Local/global total latency at most 1.20',
-             observed=float(time_med['Local POD-NN']/time_med['Global POD-NN']),threshold=1.20,
-             passes=bool(time_med['Local POD-NN']/time_med['Global POD-NN']<=1.20)),
-        dict(goal='Local wave error lower than global wave error',
-             observed=float(sm['Local POD-NN']['mean_wave_rel_l2']/max(sm['Global POD-NN']['mean_wave_rel_l2'],1e-12)),
-             threshold=1.0,
-             passes=bool(sm['Local POD-NN']['mean_wave_rel_l2']<sm['Global POD-NN']['mean_wave_rel_l2'])),
-    ]
+    target_rows=goal_diagnostics(accuracy,timings)
     write_rows(root/'metrics'/'goal_check.csv',target_rows)
     details=dict(config=cfg,run_output=str(root),geometry_counts={k:len(v) for k,v in split.items()},
                  selected_experts=len(set(labels)),expert_state_counts=np.bincount(labels).tolist(),
                  accuracy=accuracy,median_total_online_ms=time_med,goal_check=target_rows,inference_backend=choice,
+                 pod_timing_medians_ms=pd.DataFrame(timings).query('model == "POD-Galerkin"')[
+                     ['pod_assembly_ms','pod_eigensolve_only_ms','pod_reconstruction_ms','pod_full_online_ms']].median().to_dict(),
+                 wavefunction_error_display='sign-aligned squared LSE ratio × 100 percent',
                  parameter_counts=parameters,
                  notes='This demo does not guarantee that local accuracy beats global accuracy.')
     (root/'run_summary.json').write_text(json.dumps(details,indent=2,default=float))
@@ -144,11 +153,76 @@ def run(config_path,output=None,resume=False,plots=True):
     return root
 
 
+
+def replot_saved_run(config_path, output):
+    """Refresh accuracy/timing figures and signed wavefunctions from saved models.
+
+    Does not generate DNS, build POD, retrain NNs, or alter checkpoints.
+    Re-evaluates held-out accuracy and benchmarks two POD timing definitions
+    using identical saved test geometries and checkpoint predictions.
+    """
+    from .inference import SequentialExperts
+    cfg = load_config(config_path)
+    root = Path(output)
+    expected = config_digest(cfg)
+    digest_file = root/'config_digest.txt'
+    if not digest_file.exists() or digest_file.read_text().strip() != expected:
+        raise ValueError('Saved run is missing or config differs; use its original --config')
+    required = [root/'data'/'dns.npz',root/'data'/'pod.npz',
+                root/'data'/'reduced.npz',root/'data'/'geometry_split.npz',
+                root/'data'/'clustering.npz',root/'models'/'global.pt']
+    missing = [str(p) for p in required if not p.is_file()]
+    if missing:
+        raise FileNotFoundError('Incomplete saved run: '+', '.join(missing))
+    torch.set_num_threads(int(cfg['runtime']['cpu_threads']))
+    with np.load(root/'data'/'dns.npz') as f:data={k:f[k] for k in f.files}
+    with np.load(root/'data'/'pod.npz') as f:phi=f['phi']
+    with np.load(root/'data'/'reduced.npz') as f:red=f['red'];features=f['features']
+    with np.load(root/'data'/'geometry_split.npz') as f:split={k:f[k] for k in f.files}
+    with np.load(root/'data'/'clustering.npz') as f:labels=f['labels']
+    global_net=load_bundle(root/'models'/'global.pt')
+    experts={int(k):load_bundle(root/'models'/f'expert_{k}.pt') for k in np.unique(labels)}
+    models={'global':global_net,'local':experts}
+    predictor=SequentialExperts(experts,labels,clip=cfg['network']['clip_predicted_coefficients'])
+    log('Recomputing held-out LSE percentages and both POD timing definitions without retraining')
+    accuracy,per_state=evaluate(data,features,phi,red,models,labels,split,cfg,predictor)
+    timing_rows=benchmark_online(data,features,phi,red,models,split['test'],cfg,predictor)
+    write_rows(root/'metrics'/'summary.csv',accuracy)
+    write_rows(root/'metrics'/'per_state_errors.csv',per_state)
+    write_rows(root/'metrics'/'timings.csv',timing_rows)
+    write_rows(root/'metrics'/'pod_timing_breakdown.csv',
+               [r for r in timing_rows if r['model']=='POD-Galerkin'])
+    goals=goal_diagnostics(accuracy,timing_rows)
+    write_rows(root/'metrics'/'goal_check.csv',goals)
+    summary_path=root/'run_summary.json'
+    run_info=json.loads(summary_path.read_text()) if summary_path.exists() else {}
+    run_info.update(accuracy=accuracy,goal_check=goals,
+        median_total_online_ms=pd.DataFrame(timing_rows).groupby('model')['total_online_ms'].median().to_dict(),
+        pod_timing_medians_ms=pd.DataFrame(timing_rows).query('model == "POD-Galerkin"')[
+            ['pod_assembly_ms','pod_eigensolve_only_ms','pod_reconstruction_ms','pod_full_online_ms']].median().to_dict(),
+        wavefunction_error_display='sign-aligned squared LSE ratio × 100 percent')
+    summary_path.write_text(json.dumps(run_info,indent=2,default=float))
+    log('Generating accuracy, timing and signed-wavefunction figures from saved weights')
+    make_plots(root)
+    make_reconstruction_figures(root,data,phi,red,models,labels,split,cfg,predictor)
+    if (root/'metrics'/'training_history.csv').exists():
+        make_training_figures(root)
+    log(f'Updated figures saved under {(root/"figures").resolve()}')
+    return root
+
+
 def main():
     ap=argparse.ArgumentParser(description='Self-contained 40-state, 80-mode four-QD POD-NN demo')
-    ap.add_argument('--config',default='configs/default_40state_tanh.yaml')
+    ap.add_argument('--config',default='configs/demo_parameters.yaml',
+                    help='YAML parameter file (default: configs/demo_parameters.yaml)')
     ap.add_argument('--output',default=None)
     ap.add_argument('--resume',action='store_true',help='Reuse caches/checkpoints in the same output folder')
     ap.add_argument('--no-plots',action='store_true')
+    ap.add_argument('--plots-only',action='store_true',help='Recompute accuracy/timing figures and wavefunction plots from saved models; no retraining')
     args=ap.parse_args()
-    run(args.config,args.output,args.resume,not args.no_plots)
+    if args.plots_only:
+        if not args.output:
+            ap.error('--plots-only requires --output pointing to an existing run folder')
+        replot_saved_run(args.config,args.output)
+    else:
+        run(args.config,args.output,args.resume,not args.no_plots)

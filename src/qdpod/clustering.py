@@ -42,7 +42,11 @@ def validation_score_for_labels(train_sigs,val_sigs,labels,centers,cfg):
 def choose_validated_state_clusters(train_sigs,val_sigs,cfg):
     """Identical objective, candidates, n_init, remapping, and tie rule as original."""
     settings=cfg['clustering']; rows=[];best=None
-    for k in settings['candidate_k']:
+    fixed_k = settings.get('fixed_k')
+    # Fixed expert count is optional. With fixed_k=None the original
+    # research K=2..8 validation selection is completely unchanged.
+    candidates = [int(fixed_k)] if fixed_k is not None else settings['candidate_k']
+    for k in candidates:
         k_eff=min(int(k),len(train_sigs))
         if k_eff<1:continue
         model=KMeans(n_clusters=k_eff,random_state=int(settings['kmeans_seed']),
@@ -75,7 +79,11 @@ def cluster_state_groups(labels,train_sigs):
 
 def expert_width(num_states,cfg):
     sizes=cfg['network']['expert_widths']
-    if num_states<=3:return int(sizes['small'])
-    if num_states>=10:return int(sizes['very_large'])
-    if num_states>=7:return int(sizes['large'])
+    thresholds=cfg['network'].get('expert_width_state_thresholds', {})
+    small_max=int(thresholds.get('small_max',3))
+    large_min=int(thresholds.get('large_min',7))
+    very_large_min=int(thresholds.get('very_large_min',10))
+    if num_states<=small_max:return int(sizes['small'])
+    if num_states>=very_large_min:return int(sizes['very_large'])
+    if num_states>=large_min:return int(sizes['large'])
     return int(sizes['default'])

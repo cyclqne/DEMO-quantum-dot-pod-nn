@@ -34,6 +34,16 @@ def load_config(path):
         raise ValueError('Invalid KMeans settings')
     if any(k < 2 for k in c['candidate_k']):
         raise ValueError('KMeans candidate K must be >=2')
+    fixed_k=c.get('fixed_k')
+    if fixed_k is not None:
+        if isinstance(fixed_k,bool) or not isinstance(fixed_k,int) or not 2 <= fixed_k <= p['states']:
+            raise ValueError('clustering.fixed_k must be null or an integer between 2 and physics.states')
+    threshold=n.get('expert_width_state_thresholds',{})
+    if threshold:
+        a,b,d=(int(threshold.get(x,default)) for x,default in
+               (('small_max',3),('large_min',7),('very_large_min',10)))
+        if not (1<=a<b<d):
+            raise ValueError('Expert width thresholds must satisfy 1 <= small_max < large_min < very_large_min')
     return cfg
 
 
