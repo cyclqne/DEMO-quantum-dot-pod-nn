@@ -1,4 +1,4 @@
-# Cluster provenance and mathematical selection rules
+selection rules
 
 Source of record: user's `final_lasso_cluster_40state_80mode_public.py` (Oct
 2026), specifically `compute_state_mode_signatures`,
