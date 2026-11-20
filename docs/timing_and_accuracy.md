@@ -16,9 +16,10 @@ The density LSE percentage uses the same squared ratio with `|ψ|²` in place
 of ψ. Energy is the average **absolute relative** error, multiplied by 100.
 
 CSV outputs retain original raw relative L2 diagnostics for comparison with
-prior experiments, but published accuracy plots display the new percentages
-and include only the global and local neural networks. POD remains in the
-CSV accuracy tables and spatial reconstruction figures.
+prior experiments, but accuracy plots include **only the global and local
+neural networks**. POD remains in the CSV accuracy tables and in the spatial
+reconstruction figures as an unscored field; POD LSE titles and POD residual
+maps against DNS are omitted.
 
 ## Per-geometry online timings
 
@@ -49,6 +50,9 @@ DNS timing covers **sparse eigensolver only**, as measured in DNS generation.
 Therefore the DNS timing is not a complete full-order assembly + solve
 comparison; the figures explicitly label it "DNS (solve only)".
 
-Each chart that contains POD-Galerkin is exported in separate `_pod_full_online`
-and `_pod_eigensolve_only` variants. This changes only the POD series: the
-per-geometry NN and DNS data remain identical between paired figures.
+The **one** POD timing comparison figure is
+`online_time_by_geometry_reduced_methods_pod_eigensolve_only.png`. It displays
+POD **reduced eigensolve-only time** beside complete online global/local NN
+runtime per held-out geometry. No full-POD-online timing figure is exported;
+assembly, eigensolve, reconstruction, and full timing remain in CSV outputs.
+The compared computational scopes differ and are identified in the plot.

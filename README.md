@@ -131,14 +131,12 @@ The figures include the selected comparisons below; numeric timing components re
 | `wavefunction_sum_a_eta_geometry_XXXX_state_YY.png` | Complete signed wavefunction modal sum, DNS residual maps and spatial cross-section |
 | `wavefunction_3d_geometry_XXXX_state_YY.png` | 3D wavefunction surfaces |
 | `wavefunction_modal_contributions_geometry_XXXX_state_YY.png` | Individual `a_j η_j` and the full 80-mode sum |
-| `online_time_by_geometry_all_methods_pod_full_online.png` | DNS, full POD-Galerkin online time and both neural networks for every geometry |
-| `online_time_by_geometry_all_methods_pod_eigensolve_only.png` | Same chart with only the POD reduced eigensolve timed |
-| `online_time_by_geometry_reduced_methods_pod_*.png` | Reduced-method comparison, both POD timing definitions |
+| `online_time_by_geometry_reduced_methods_pod_eigensolve_only.png` | The **only** POD timing comparison: reduced eigensolve-only time alongside complete global/local NN online times for each test geometry |
 | `training_loss_by_model.png` | Stage-wise training objective |
 | `validation_wave_error_by_model.png` | Sign-aligned validation wavefunction LSE (%) |
 | `kmeans_selection.png` | Local-expert clustering results |
 
-Charts with POD timing are generated as separate **`_pod_full_online`** and **`_pod_eigensolve_only`** versions, with their definitions in each plot title. 
+Only one POD timing comparison graph is generated. Full POD online timings remain available in the CSV files but are **not plotted**. 
 
 ### Accuracy definition
 
@@ -158,8 +156,10 @@ of each predicted state that minimizes the numerator (sign-invariant LSE).
 the ordinary relative L2 norm times 100. The same squared normalization is
 used for the density LSE; energy uses mean absolute relative error × 100.
 
-Accuracy charts display only Global and Local POD-NN. POD-Galerkin continues
-to be measured for the numerical CSV comparison and reconstruction figures.
+Accuracy charts display only Global and Local POD-NN. POD-Galerkin accuracy
+remains in CSV tables, but no POD accuracy score or residual map is displayed
+in the figures. Its reconstructed signed wavefunction is still shown alongside
+DNS and neural predictions for qualitative comparison.
 
 ### POD-Galerkin timing definitions
 
@@ -172,12 +172,12 @@ basis generation and construction of the precomputed reduced kinetic operator.
 already assembled 80×80 reduced Hamiltonian. It excludes matrix assembly,
 potential creation and wavefunction reconstruction.
 
-Both definitions are measured, on the same held-out geometries, with repeated
-runs and median latencies. The required NN feature construction, neural
-inference and wavefunction reconstruction are included in the NN total online
-timing in *both* variants. DNS timings refer only to the sparse full-order
-eigensolver (not its matrix assembly). These differences are labeled in the
-plots so they cannot be mistaken for identical total-cost comparisons.
+Both POD timing definitions are measured for the CSV outputs, but only the
+**reduced eigensolve-only** time is plotted. The single graph compares it with
+the complete online timings of both neural networks, which include feature
+construction, neural inference, and wavefunction reconstruction. This is an
+explicit comparison of different computational scopes, not of equal full
+online workloads. DNS sparse eigensolve timings are retained in the CSVs.
 
 A per-geometry POD audit is saved as `metrics/pod_timing_breakdown.csv` in
 addition to the main `metrics/timings.csv`.
@@ -191,8 +191,10 @@ Run this command from the project folder (replace the example timestamp):
 .\.venv\Scripts\python.exe main.py --plots-only --output "results/tanh_40state_80mode_49grid/<run_timestamp>"
 ```
 
-This recomputes the held-out percentage accuracy tables and both POD timing
-variants, then generates the figures from saved models **without retraining**.
+This refreshes held-out accuracy tables, both POD timing measurements in CSV,
+and the single reduced-eigensolve comparison figure **without retraining**.
+It also removes retired full-online and duplicate POD timing plots left by
+older versions of the repository.
 
 ### Wavefunction reconstruction
 

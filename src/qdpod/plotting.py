@@ -11,8 +11,39 @@ import pandas as pd
 PALETTE = {'DNS (solve only)':'#ae8169', 'POD-Galerkin':'#898f68',
            'Global POD-NN':'#577a98', 'Local POD-NN':'#348887'}
 NN_METHODS = ['Global POD-NN', 'Local POD-NN']
+# Both POD timing definitions are retained in numeric output. Only the reduced
+# eigensolve-only definition is displayed in the one POD timing comparison.
 POD_FIELDS = {'full_online': ('total_online_ms','POD full online (assembly + eigensolve + reconstruction)'),
               'eigensolve_only': ('pod_eigensolve_only_ms','POD reduced eigensolve only')}
+POD_TIMING_FIGURE = 'online_time_by_geometry_reduced_methods_pod_eigensolve_only.png'
+
+# Exact names from earlier releases. Refreshing an existing run will not leave
+# obsolete (or misleading full-online) POD comparisons in the figures folder.
+RETIRED_POD_TIMING_FIGURES = (
+    'online_time_by_geometry_all_methods_pod_full_online.png',
+    'online_time_by_geometry_all_methods_pod_eigensolve_only.png',
+    'online_time_by_geometry_reduced_methods_pod_full_online.png',
+    'online_time_by_geometry_all_methods.png',
+    'online_time_by_geometry_reduced_methods.png',
+    'online_time_distribution_reduced.png',
+    'online_time_distribution_reduced_pod_full_online.png',
+    'online_time_distribution_reduced_pod_eigensolve_only.png',
+    'pod_vs_nn_timing_by_geometry_pod_full_online.png',
+    'pod_vs_nn_timing_by_geometry_pod_eigensolve_only.png',
+    'pod_to_nn_time_ratio_by_geometry_pod_full_online.png',
+    'pod_to_nn_time_ratio_by_geometry_pod_eigensolve_only.png',
+    'pod_timing_components_by_geometry.png',
+    'pod_timing_components_stacked_by_geometry.png',
+    'total_cpu_latency.png',
+    'online_time_by_geometry_all_methods_pod_eigensolve_only.png.bak',
+)
+
+
+def remove_retired_pod_plots(figures):
+    figures = Path(figures)
+    for filename in RETIRED_POD_TIMING_FIGURES:
+        (figures / filename).unlink(missing_ok=True)
+
 
 
 def _save(fig,path):
@@ -27,28 +58,16 @@ def make_plots(out):
     # intentionally no longer produced, but older versions may have left them.
     obsolete = (
         'wavefunction_accuracy.png',
-        'total_cpu_latency.png',
         'per_state_wave_error.png',
-        'online_time_by_geometry_all_methods.png',
-        'online_time_by_geometry_reduced_methods.png',
-        'online_time_distribution_reduced.png',
-        'local_global_latency_ratio_by_geometry.png',
-        'nn_forward_time_by_geometry.png',
+        'wave_lse_percent_by_geometry.png',
         'online_time_by_geometry_neural_networks.png',
         'online_time_by_geometry_nueral_networks.png',
-        'online_time_distribution_reduced_pod_eigensolve_only.png',
-        'online_time_distribution_reduced_pod_full_online.png',
-        'pod_timing_components_by_geometry.png',
-        'pod_timing_components_stacked_by_geometry.png',
-        'pod_to_nn_time_ratio_by_geometry_pod_eigensolve_only.png',
-        'pod_to_nn_time_ratio_by_geometry_pod_full_online.png',
-        'pod_vs_nn_timing_by_geometry_pod_eigensolve_only.png',
-        'pod_vs_nn_timing_by_geometry_pod_full_online.png',
-        'wave_lse_percent_by_geometry.png',
-        'online_time_by_geometry_all_methods_pod_eigensolve_only.png.bak',
+        'local_global_latency_ratio_by_geometry.png',
+        'nn_forward_time_by_geometry.png',
     )
     for filename in obsolete:
         (figs / filename).unlink(missing_ok=True)
+    remove_retired_pod_plots(figs)
     summary=pd.read_csv(out/'metrics'/'summary.csv')
     timings=pd.read_csv(out/'metrics'/'timings.csv')
     groups=pd.read_csv(out/'metrics'/'expert_state_groups.csv')
@@ -129,40 +148,30 @@ def _timing_matrix(timings, pod_variant):
 
 
 def make_timing_detail_figures(out, timings):
-    """Only the two requested per-geometry timing comparisons remain.
+    """Generate exactly ONE POD timing comparison with reduced eigensolve only.
 
-    Every POD-containing figure has a full-online and eigensolve-only version;
-    DNS remains sparse-solve-only, and both NNs retain their full online cost.
-    All detailed timing measurements still remain available in CSV output.
+    Shows per-geometry reduced POD eigensolve time versus the *complete* online
+    time of both NNs. POD assembly and reconstruction are excluded from the
+    plotted POD series, but are still measured and written to CSV separately.
     """
     out = Path(out)
     figures = out / 'figures'
     figures.mkdir(exist_ok=True)
-    comparisons = [
-        (['DNS (solve only)', 'POD-Galerkin'] + NN_METHODS,
-         'online_time_by_geometry_all_methods',
-         'Per-geometry CPU time: DNS, POD and neural networks', True),
-        (['POD-Galerkin'] + NN_METHODS,
-         'online_time_by_geometry_reduced_methods',
-         'Reduced-order online runtime by geometry', False),
-    ]
-    for variant, (_, pod_label) in POD_FIELDS.items():
-        series = _timing_matrix(timings, variant)
-        x = series.index.to_numpy()
-        for methods, stem, title, use_log in comparisons:
-            fig, ax = plt.subplots(figsize=(11, 5.2))
-            for method in methods:
-                label = pod_label if method == 'POD-Galerkin' else method
-                ax.plot(x, series[method], marker='o', markersize=3,
-                        linewidth=1.5, label=label, color=PALETTE[method])
-            if use_log:
-                ax.set_yscale('log')
-            ax.set(xlabel='Held-out geometry ID', ylabel='Time (ms per geometry)',
-                   title=f'{title}\n{pod_label}')
-            ax.grid(alpha=.18, which='both')
-            ax.legend(fontsize=9)
-            fig.tight_layout()
-            _save(fig, figures / f'{stem}_pod_{variant}.png')
+    remove_retired_pod_plots(figures)
+    series = _timing_matrix(timings, 'eigensolve_only')
+    x = series.index.to_numpy()
+    fig, ax = plt.subplots(figsize=(11, 5.2))
+    for method in ('POD-Galerkin', *NN_METHODS):
+        display_name = ('POD-Galerkin (reduced eigensolve only)'
+                        if method == 'POD-Galerkin' else method)
+        ax.plot(x, series[method], marker='o', markersize=3,
+                linewidth=1.5, label=display_name, color=PALETTE[method])
+    ax.set(xlabel='Held-out geometry ID', ylabel='Time (ms per geometry)',
+           title='Per-geometry CPU timing: reduced POD eigensolve vs neural networks')
+    ax.grid(alpha=.18)
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    _save(fig, figures / POD_TIMING_FIGURE)
 
 
 def _wavefunction_modal_sum_figure(figdir, geometry_id, state, grid, length,
@@ -198,13 +207,17 @@ def _wavefunction_modal_sum_figure(figdir, geometry_id, state, grid, length,
         ax.set_xlabel('x (nm)')
         if j==0:ax.set_ylabel('y (nm)')
         first_images.append(im)
-        if j>0:
+        if j>=2:
             ax=fig.add_subplot(gs[1,j])
             diff=field-ref.reshape((nx,nx),order='F')
             ax.imshow(diff,origin='lower',extent=[0,length,0,length],
                       cmap='PuOr',vmin=-2*vmax,vmax=2*vmax,interpolation='nearest')
-            ax.set_title('Signed residual vs DNS',fontsize=10)
+            ax.set_title('NN signed residual vs DNS',fontsize=10)
             ax.set_xlabel('x (nm)')
+        elif j==1:
+            ax=fig.add_subplot(gs[1,j]);ax.axis('off')
+            ax.text(.5,.55,'POD modal reconstruction\nfrom reduced eigenvectors',
+                    ha='center',va='center',fontsize=11)
         else:
             ax=fig.add_subplot(gs[1,0]);ax.axis('off')
             ax.text(0.03,.92,'Wavefunction construction',fontsize=11,weight='bold',va='top')
@@ -224,7 +237,7 @@ def _wavefunction_modal_sum_figure(figdir, geometry_id, state, grid, length,
     cb_ax=fig.add_axes([.924,.59,.012,.27])
     fig.colorbar(first_images[0],cax=cb_ax,label='Signed ψ amplitude')
     fig.suptitle(f'Geometry {geometry_id} | eigenstate {state+1}: signed wavefunction from POD modal sums\n'
-                 'DNS reference vs reduced eigensolve and learned POD coefficients',fontsize=14)
+                 'DNS reference vs POD and learned modal coefficients (NN residuals shown)',fontsize=14)
     path=figdir/f'wavefunction_sum_a_eta_geometry_{geometry_id:04d}_state_{state+1:02d}.png'
     fig.savefig(path,dpi=180)
     plt.close(fig)
@@ -364,9 +377,17 @@ def make_reconstruction_figures(out, data, phi, red, models, labels, split, cfg,
                                           cmap='RdBu_r',vmin=-vmax,vmax=vmax,interpolation='nearest')
                 im_density=axes[1,j].imshow(arr*arr,origin='lower',extent=[0,length,0,length],
                                              cmap='viridis',vmin=0,vmax=density_max,interpolation='nearest')
-                from .evaluation import percent_lse
-                error=float(percent_lse(reference,wave,sign_invariant=True))
-                axes[0,j].set_title(name + (f'\nLSE={error:.2f}%' if j else '\nreference'),fontsize=10)
+                # Numeric accuracy annotations are NN-only. POD-Galerkin remains
+                # a spatial reconstruction baseline, not an accuracy plot series.
+                if j == 0:
+                    caption = '\nreference'
+                elif j == 1:
+                    caption = ''
+                else:
+                    from .evaluation import percent_lse
+                    error = float(percent_lse(reference,wave,sign_invariant=True))
+                    caption = f'\nLSE={error:.2f}%'
+                axes[0,j].set_title(name + caption, fontsize=10)
                 axes[1,j].set_xlabel('x (nm)')
                 if j==0:
                     axes[0,j].set_ylabel('y (nm) | signed wavefunction ψ')

@@ -57,13 +57,24 @@ def test_timing_plots_are_per_geometry(tmp_path):
             rows.append(row)
     make_timing_detail_figures(tmp_path,pd.DataFrame(rows))
     figs=tmp_path/'figures'
-    assert (figs/'online_time_by_geometry_all_methods_pod_full_online.png').stat().st_size>1000
-    assert (figs/'online_time_by_geometry_all_methods_pod_eigensolve_only.png').stat().st_size>1000
-    assert (figs/'online_time_by_geometry_reduced_methods_pod_full_online.png').stat().st_size>1000
-    assert (figs/'online_time_by_geometry_reduced_methods_pod_eigensolve_only.png').stat().st_size>1000
-    forbidden = ["pod_vs_nn_timing_by_geometry_pod_full_online.png",
-                 "pod_vs_nn_timing_by_geometry_pod_eigensolve_only.png",
-                 "pod_timing_components_by_geometry.png",
-                 "online_time_by_geometry_neural_networks.png",
-                 "nn_forward_time_by_geometry.png"]
+    # Exactly one POD timing figure: reduced eigensolve-only vs both NNs.
+    kept = 'online_time_by_geometry_reduced_methods_pod_eigensolve_only.png'
+    assert (figs / kept).stat().st_size > 1000
+    assert len(list(figs.glob('*.png'))) == 1
+    forbidden = [
+        'online_time_by_geometry_all_methods_pod_full_online.png',
+        'online_time_by_geometry_all_methods_pod_eigensolve_only.png',
+        'online_time_by_geometry_reduced_methods_pod_full_online.png',
+        'pod_timing_components_by_geometry.png',
+        'pod_vs_nn_timing_by_geometry_pod_full_online.png',
+        'online_time_by_geometry_neural_networks.png',
+        'nn_forward_time_by_geometry.png',
+    ]
     assert all(not (figs / filename).exists() for filename in forbidden)
+
+
+def test_reconstruction_plot_does_not_display_pod_lse_annotation():
+    from pathlib import Path
+    source=(Path(__file__).resolve().parents[1]/'src/qdpod/plotting.py').read_text()
+    assert "elif j == 1:\n                    caption = ''" in source
+    assert "elif j==1:" in source  # Residual panel disabled for POD in modal-sum comparison.

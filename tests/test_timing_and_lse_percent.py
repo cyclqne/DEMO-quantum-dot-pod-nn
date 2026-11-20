@@ -50,7 +50,7 @@ def test_pod_full_is_assembly_plus_eigensolve_plus_reconstruction():
         atol=1e-8)
 
 
-def test_every_pod_containing_plot_has_exactly_two_named_variants(tmp_path):
+def test_only_one_pod_timing_figure_and_old_plots_are_cleaned(tmp_path):
     rows=[]
     for g in (3,9,12):
         for model,ms in [('DNS (solve only)',6.),('POD-Galerkin',1.1),
@@ -63,22 +63,21 @@ def test_every_pod_containing_plot_has_exactly_two_named_variants(tmp_path):
                          pod_full_online_ms=ms+g*.015)
             rows.append(r)
     df=pd.DataFrame(rows)
+    # Numeric full-online timing still exists and differs from solve-only.
     full=_timing_matrix(df,'full_online')
     solve=_timing_matrix(df,'eigensolve_only')
     assert (full['POD-Galerkin']>solve['POD-Galerkin']).all()
     for name in ('DNS (solve only)','Global POD-NN','Local POD-NN'):
         np.testing.assert_allclose(full[name],solve[name])
+    figs=tmp_path/'figures';figs.mkdir()
+    old_files=('online_time_by_geometry_all_methods_pod_full_online.png',
+               'online_time_by_geometry_all_methods_pod_eigensolve_only.png',
+               'online_time_by_geometry_reduced_methods_pod_full_online.png',
+               'pod_vs_nn_timing_by_geometry_pod_eigensolve_only.png')
+    for name in old_files:
+        (figs/name).write_bytes(b'legacy')
     make_timing_detail_figures(tmp_path,df)
-    for prefix in ('online_time_by_geometry_all_methods',
-                   'online_time_by_geometry_reduced_methods'):
-        for suffix in ('pod_full_online','pod_eigensolve_only'):
-            assert (tmp_path/'figures'/f'{prefix}_{suffix}.png').stat().st_size>1000
-    assert not (tmp_path/'figures'/'total_cpu_latency.png').exists()
-    assert not (tmp_path/'figures'/'wavefunction_accuracy.png').exists()
-    forbidden = ('pod_timing_components_by_geometry.png',
-                 'pod_timing_components_stacked_by_geometry.png',
-                 'online_time_distribution_reduced_pod_full_online.png',
-                 'online_time_distribution_reduced_pod_eigensolve_only.png',
-                 'pod_to_nn_time_ratio_by_geometry_pod_full_online.png',
-                 'pod_vs_nn_timing_by_geometry_pod_eigensolve_only.png')
-    assert all(not (tmp_path/'figures'/filename).exists() for filename in forbidden)
+    kept='online_time_by_geometry_reduced_methods_pod_eigensolve_only.png'
+    assert (figs/kept).stat().st_size>1000
+    assert [p.name for p in figs.glob('*.png')]==[kept]
+    assert all(not (figs/f).exists() for f in old_files)
